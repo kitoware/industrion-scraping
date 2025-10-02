@@ -60,6 +60,9 @@ data/*.sqlite
 *.swp
 *.swo
 
+# Secrets
+industrion-scraping-155f5bba4642.json
+
 # Node
 node_modules/
 .next/
