@@ -9,17 +9,45 @@ from dotenv import load_dotenv
 from jobs_pipeline import load_config, resolve_input, run_pipeline
 
 
-def _json_response(status: HTTPStatus, payload: Dict[str, Any]) -> Dict[str, Any]:
+DEFAULT_HEADERS = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+}
+
+
+def _json_response(
+    status: HTTPStatus,
+    payload: Dict[str, Any],
+    headers: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    response_headers: Dict[str, Any] = {**DEFAULT_HEADERS}
+    if headers:
+        response_headers.update(headers)
     return {
         "statusCode": int(status.value),
-        "headers": {"Content-Type": "application/json"},
+        "headers": response_headers,
         "body": json.dumps(payload),
     }
 
 
 def handler(request: Any) -> Dict[str, Any]:
+    if request.method == "OPTIONS":
+        return {
+            "statusCode": int(HTTPStatus.NO_CONTENT.value),
+            "headers": {
+                **DEFAULT_HEADERS,
+                "Allow": "POST, OPTIONS",
+            },
+            "body": "",
+        }
     if request.method != "POST":
-        return _json_response(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "Method Not Allowed"})
+        return _json_response(
+            HTTPStatus.METHOD_NOT_ALLOWED,
+            {"error": "Method Not Allowed"},
+            {"Allow": "POST, OPTIONS"},
+        )
 
     try:
         payload = request.json()  # type: ignore[attr-defined]
