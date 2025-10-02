@@ -3,9 +3,31 @@ import { spawn } from 'node:child_process';
 
 const isProd = process.env.NODE_ENV === 'production';
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+} as const;
+
+function withCors(init?: ResponseInit): ResponseInit {
+  const headers = new Headers(init?.headers);
+  Object.entries(corsHeaders).forEach(([key, value]) => {
+    headers.set(key, value);
+  });
+  return { ...init, headers };
+}
+
+function jsonWithCors(body: unknown, init?: ResponseInit) {
+  return NextResponse.json(body, withCors(init));
+}
+
+export async function OPTIONS() {
+  return new Response(null, withCors({ status: 204, headers: { Allow: 'POST, OPTIONS' } }));
+}
+
 export async function POST(request: Request) {
   if (isProd) {
-    return NextResponse.json({ error: 'Python handler serves /api/run in production.' }, { status: 404 });
+    return jsonWithCors({ error: 'Python handler serves /api/run in production.' }, { status: 404 });
   }
 
   const payload = await request.json();
@@ -33,13 +55,13 @@ export async function POST(request: Request) {
         try {
           const parsed = JSON.parse(stdout || '{}');
           if (parsed && typeof parsed === 'object' && parsed.error) {
-            resolve(NextResponse.json(parsed, { status: 500 }));
+            resolve(jsonWithCors(parsed, { status: 500 }));
             return;
           }
-          resolve(NextResponse.json(parsed));
+          resolve(jsonWithCors(parsed));
         } catch (error) {
           resolve(
-            NextResponse.json(
+            jsonWithCors(
               { error: 'Failed to parse local pipeline output', details: (error as Error).message },
               { status: 500 },
             ),
@@ -55,7 +77,7 @@ export async function POST(request: Request) {
         }
 
         resolve(
-          NextResponse.json(
+          jsonWithCors(
             {
               error: message,
               stderr,
