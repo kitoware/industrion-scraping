@@ -26,11 +26,45 @@ export async function OPTIONS() {
 }
 
 export async function POST(request: Request) {
-  if (isProd) {
-    return jsonWithCors({ error: 'Python handler serves /api/run in production.' }, { status: 404 });
-  }
-
   const payload = await request.json();
+
+  if (isProd) {
+    const protocol = request.headers.get('x-forwarded-proto') ?? 'https';
+    const host = request.headers.get('host');
+
+    if (!host) {
+      return jsonWithCors({ error: 'Missing host header in request' }, { status: 502 });
+    }
+
+    try {
+      const response = await fetch(`${protocol}://${host}/api/run.py`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        cache: 'no-store',
+        body: JSON.stringify(payload),
+      });
+
+      const text = await response.text();
+      let body: unknown;
+      try {
+        body = text ? JSON.parse(text) : {};
+      } catch (error) {
+        body = { error: 'Upstream returned non-JSON payload', details: text, parserError: (error as Error).message };
+      }
+
+      return jsonWithCors(body, { status: response.status });
+    } catch (error) {
+      return jsonWithCors(
+        {
+          error: 'Failed to invoke Python handler',
+          details: error instanceof Error ? error.message : String(error),
+        },
+        { status: 502 },
+      );
+    }
+  }
 
   return new Promise<Response>((resolve) => {
     const child = spawn('python', ['api/run_local.py'], {
