@@ -133,7 +133,7 @@ def handler(request: Any) -> Dict[str, Any]:
                 },
             )
 
-        payload: Dict[str, Any] = {"totals": totals, "dryRun": dry_run}
+        payload = {"totals": totals, "dryRun": dry_run}
         if normalized_errors:
             payload["errors"] = normalized_errors
 

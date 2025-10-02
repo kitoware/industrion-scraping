@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     }
 
     try {
-      const response = await fetch(`${protocol}://${host}/api/run.py`, {
+      const response = await fetch(`${protocol}://${host}/api/pipeline`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
