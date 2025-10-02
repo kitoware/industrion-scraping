@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "title":        { "type": "string", "minLength": 1 },
+    "company_name": { "type": "string", "minLength": 1 },
+    "location":     { "type": "string" },
+    "remote_ok":    { "type": "boolean" },
+    "job_type":     { "type": "string", "enum": ["Full Time", "Part Time", "Internship"] },
+    "description_html": { "type": "string" },
+    "min_salary":   { "type": ["number","null"] },
+    "max_salary":   { "type": ["number","null"] },
+    "application_link": { "type": ["string", "null"] }
+  },
+  "required": ["title","company_name","remote_ok","job_type","description_html","application_link"]
+}
+

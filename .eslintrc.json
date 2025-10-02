@@ -1,0 +1,15 @@
+{
+  "extends": ["next/core-web-vitals"],
+  "ignorePatterns": [
+    "*.py",
+    "config/**",
+    "data/**",
+    "docs/**",
+    "prompts/**",
+    "schemas/**",
+    "tests/**",
+    "utils/**",
+    "jobs_pipeline.py",
+    "*.json"
+  ]
+}

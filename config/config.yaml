@@ -1,0 +1,38 @@
+openrouter:
+  api_key_env: OPENROUTER_API_KEY
+  # Use canonical OpenRouter model slugs
+  model_job_links: "openai/gpt-5"
+  model_job_fields: "openai/gpt-5"
+  max_tokens: 4000
+  temperature: 0.2
+  timeout_seconds: 60
+  rate_limit_delay: 1.0  # seconds between requests
+
+firecrawl:
+  api_key_env: FIRECRAWL_API_KEY
+  render_js: true
+  extract_links: true
+  request_timeout: 30
+  # Force fresh content and allow JS render wait to surface dynamic links
+  max_age_ms: 0
+  only_main_content: false
+  wait_ms: 1500
+  rate_limit_delay: 2.0  # seconds between requests
+
+google_sheets:
+  service_account_json_env: GOOGLE_APPLICATION_CREDENTIALS
+  spreadsheet_id: "1gY1A-l0xbh1EdIR0soeFS17YSzCmZxzDHc4wyKrTSqY"
+  worksheet_name: "Sheet1"
+  batch_size: 200
+
+runtime:
+  input_file: null
+  single_url: null
+  company_override: null
+  concurrency: 3  # Reduced from 8 to prevent rate limiting
+  retry:
+    max_attempts: 3
+    backoff_seconds: 2
+  cache_path: "data/cache.sqlite"
+  log_level: "INFO"
+
