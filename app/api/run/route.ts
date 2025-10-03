@@ -3,8 +3,11 @@ import { spawn } from 'node:child_process';
 
 const isVercel = process.env.VERCEL === '1';
 const forceRemotePipeline = process.env.FORCE_REMOTE_PIPELINE === '1';
+const pipelineEndpointEnv = process.env.PIPELINE_ENDPOINT?.trim();
+const allowLocalFallbackEnv = process.env.ALLOW_LOCAL_FALLBACK === '1';
+
 const shouldUseRemotePipeline = isVercel || forceRemotePipeline;
-const allowLocalFallback = !isVercel && !forceRemotePipeline;
+const allowLocalFallback = (!isVercel && !forceRemotePipeline) || allowLocalFallbackEnv;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -96,12 +99,25 @@ export async function POST(request: Request) {
     const protocol = request.headers.get('x-forwarded-proto') ?? 'https';
     const host = request.headers.get('host');
 
-    if (!host) {
+    const hasAbsoluteEndpoint = Boolean(pipelineEndpointEnv && pipelineEndpointEnv.startsWith('http'));
+
+    if (!host && !hasAbsoluteEndpoint) {
       return jsonWithCors({ error: 'Missing host header in request' }, { status: 502 });
     }
 
+    const remoteEndpoint = (() => {
+      if (!pipelineEndpointEnv) {
+        return `${protocol}://${host}/api/pipeline`;
+      }
+      if (pipelineEndpointEnv.startsWith('http')) {
+        return pipelineEndpointEnv.replace(/\/$/, '');
+      }
+      const normalizedPath = pipelineEndpointEnv.startsWith('/') ? pipelineEndpointEnv : `/${pipelineEndpointEnv}`;
+      return `${protocol}://${host}${normalizedPath}`;
+    })();
+
     try {
-      const response = await fetch(`${protocol}://${host}/api/pipeline`, {
+      const response = await fetch(remoteEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -126,6 +142,7 @@ export async function POST(request: Request) {
         return jsonWithCors(
           {
             error: 'Remote pipeline request failed',
+            status: response.status,
             details: typeof body === 'object' && body ? body : text,
           },
           { status: response.status },
