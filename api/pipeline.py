@@ -33,7 +33,10 @@ def _json_response(
 
 
 def handler(request: Any) -> Dict[str, Any]:
-    if request.method == "OPTIONS":
+    method = str(getattr(request, "method", ""))
+    method = method.upper() if method else ""
+
+    if method == "OPTIONS":
         return {
             "statusCode": int(HTTPStatus.NO_CONTENT.value),
             "headers": {
@@ -42,7 +45,16 @@ def handler(request: Any) -> Dict[str, Any]:
             },
             "body": "",
         }
-    if request.method != "POST":
+    if method == "HEAD":
+        return {
+            "statusCode": int(HTTPStatus.NO_CONTENT.value),
+            "headers": {
+                **DEFAULT_HEADERS,
+                "Allow": "POST, OPTIONS",
+            },
+            "body": "",
+        }
+    if method != "POST":
         return _json_response(
             HTTPStatus.METHOD_NOT_ALLOWED,
             {"error": "Method Not Allowed"},
