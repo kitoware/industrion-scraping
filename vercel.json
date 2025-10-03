@@ -5,10 +5,10 @@
       "runtime": "@vercel/python@5.0.0"
     }
   },
-  "routes": [
+  "rewrites": [
     {
-      "src": "/api/pipeline",
-      "dest": "/api/pipeline.py"
+      "source": "/api/pipeline",
+      "destination": "/api/pipeline.py"
     }
   ]
 }
