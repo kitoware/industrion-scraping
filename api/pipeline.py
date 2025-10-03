@@ -33,8 +33,15 @@ def _json_response(
 
 
 def handler(request: Any) -> Dict[str, Any]:
-    method = str(getattr(request, "method", ""))
-    method = method.upper() if method else ""
+    raw_method = getattr(request, "method", "")
+    if callable(raw_method):
+        try:
+            raw_method = raw_method()
+        except TypeError:
+            raw_method = raw_method(request)
+    if isinstance(raw_method, bytes):
+        raw_method = raw_method.decode("utf-8", "ignore")
+    method = str(raw_method).strip().upper() if raw_method else ""
 
     if method == "OPTIONS":
         return {
