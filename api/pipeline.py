@@ -34,14 +34,48 @@ def _json_response(
 
 def handler(request: Any) -> Dict[str, Any]:
     raw_method = getattr(request, "method", "")
+    original_method = raw_method
     if callable(raw_method):
         try:
             raw_method = raw_method()
         except TypeError:
             raw_method = raw_method(request)
+
+    if not raw_method:
+        fallback_method = None
+        if isinstance(request, dict):
+            fallback_method = request.get("httpMethod") or request.get("method")
+        elif hasattr(request, "get"):
+            try:
+                fallback_method = request.get("httpMethod") or request.get("method")
+            except Exception:  # noqa: BLE001
+                fallback_method = None
+        raw_method = fallback_method or raw_method
+
     if isinstance(raw_method, bytes):
         raw_method = raw_method.decode("utf-8", "ignore")
+
+    allowed_methods = {"POST", "OPTIONS", "HEAD"}
     method = str(raw_method).strip().upper() if raw_method else ""
+
+    if not method and isinstance(original_method, str):
+        upper_original = original_method.upper()
+        for candidate in allowed_methods:
+            if candidate in upper_original:
+                method = candidate
+                break
+
+    if method not in allowed_methods and isinstance(raw_method, str):
+        upper_current = raw_method.upper()
+        for candidate in allowed_methods:
+            if candidate in upper_current:
+                method = candidate
+                break
+
+    method_details = str(raw_method if raw_method is not None else original_method)
+
+    if not method:
+        method = "POST"
 
     if method == "OPTIONS":
         return {
@@ -64,7 +98,7 @@ def handler(request: Any) -> Dict[str, Any]:
     if method != "POST":
         return _json_response(
             HTTPStatus.METHOD_NOT_ALLOWED,
-            {"error": "Method Not Allowed"},
+            {"error": "Method Not Allowed", "details": {"method": method_details}},
             {"Allow": "POST, OPTIONS"},
         )
 
