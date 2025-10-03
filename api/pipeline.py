@@ -41,6 +41,9 @@ def handler(request: Any) -> Dict[str, Any]:
         except TypeError:
             raw_method = raw_method(request)
 
+    if isinstance(raw_method, dict):
+        raw_method = raw_method.get("httpMethod") or raw_method.get("method")
+
     if not raw_method:
         fallback_method = None
         if isinstance(request, dict):
@@ -52,8 +55,23 @@ def handler(request: Any) -> Dict[str, Any]:
                 fallback_method = None
         raw_method = fallback_method or raw_method
 
+    if not raw_method:
+        attr_method = getattr(request, "httpMethod", None) or getattr(request, "http_method", None)
+        if callable(attr_method):
+            try:
+                raw_method = attr_method()
+            except TypeError:
+                raw_method = attr_method(request)
+        elif attr_method:
+            raw_method = attr_method
+
+    if isinstance(raw_method, dict):
+        raw_method = raw_method.get("httpMethod") or raw_method.get("method")
+
     if isinstance(raw_method, bytes):
         raw_method = raw_method.decode("utf-8", "ignore")
+
+    method_details = str(raw_method if raw_method is not None else original_method)
 
     allowed_methods = {"POST", "OPTIONS", "HEAD"}
     method = str(raw_method).strip().upper() if raw_method else ""
@@ -72,7 +90,11 @@ def handler(request: Any) -> Dict[str, Any]:
                 method = candidate
                 break
 
-    method_details = str(raw_method if raw_method is not None else original_method)
+    if method not in allowed_methods and method_details:
+        for candidate in allowed_methods:
+            if candidate in method_details.upper():
+                method = candidate
+                break
 
     if not method:
         method = "POST"
