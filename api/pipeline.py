@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from typing import Any, Dict, Optional
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from api.run_local import execute as run_local_execute
-
-from dotenv import load_dotenv
-
-from jobs_pipeline import load_config, resolve_input, run_pipeline
 
 
 DEFAULT_HEADERS = {
