@@ -46,6 +46,46 @@ function buildRemoteEndpoints(protocol: string, host: string | null) {
   return Array.from(new Set([absolute, `${absolute}.py`]));
 }
 
+async function postWithRedirects(endpoint: string, payload: unknown, maxRedirects = 3) {
+  let url = endpoint;
+  for (let redirects = 0; redirects <= maxRedirects; redirects++) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      cache: 'no-store',
+      redirect: 'manual',
+      body: JSON.stringify(payload),
+    });
+
+    if (![301, 302, 303, 307, 308].includes(response.status)) {
+      return { response, url } as const;
+    }
+
+    const location = response.headers.get('location');
+    if (!location) {
+      return { response, url } as const;
+    }
+
+    if (redirects === maxRedirects) {
+      return { response, url } as const;
+    }
+
+    try {
+      url = new URL(location, url).toString();
+      console.warn(`Remote pipeline redirected to ${url}. Retrying POST.`);
+    } catch (error) {
+      console.warn(
+        `Failed to resolve redirect location ${location}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { response, url } as const;
+    }
+  }
+
+  throw new Error('Unexpected redirect handling fallthrough');
+}
+
 function withCors(init?: ResponseInit): ResponseInit {
   const headers = new Headers(init?.headers);
   Object.entries(corsHeaders).forEach(([key, value]) => {
@@ -146,14 +186,7 @@ export async function POST(request: Request) {
       const isLastEndpoint = index === remoteEndpoints.length - 1;
 
       try {
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          cache: 'no-store',
-          body: JSON.stringify(payload),
-        });
+        const { response, url: resolvedUrl } = await postWithRedirects(endpoint, payload);
 
         const text = await response.text();
         let body: unknown;
@@ -165,12 +198,12 @@ export async function POST(request: Request) {
 
         if (!response.ok) {
           if (response.status === 405 && !isLastEndpoint) {
-            console.warn(`Remote pipeline ${endpoint} rejected POST; retrying fallback endpoint.`);
+            console.warn(`Remote pipeline ${resolvedUrl} rejected POST; retrying fallback endpoint.`);
             continue;
           }
 
           if (allowLocalFallback) {
-            console.warn(`Remote pipeline ${endpoint} failed with status ${response.status}; using local pipeline.`);
+            console.warn(`Remote pipeline ${resolvedUrl} failed with status ${response.status}; using local pipeline.`);
             return runLocalPipeline(payload);
           }
 
@@ -184,8 +217,8 @@ export async function POST(request: Request) {
           );
         }
 
-        if (index > 0) {
-          console.warn(`Remote pipeline fallback succeeded via ${endpoint}.`);
+        if (index > 0 || endpoint !== resolvedUrl) {
+          console.warn(`Remote pipeline fallback succeeded via ${resolvedUrl}.`);
         }
 
         return jsonWithCors(body, { status: response.status });
