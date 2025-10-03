@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 const isVercel = process.env.VERCEL === '1';
 const forceRemotePipeline = process.env.FORCE_REMOTE_PIPELINE === '1';
 const shouldUseRemotePipeline = isVercel || forceRemotePipeline;
+const allowLocalFallback = !isVercel && !forceRemotePipeline;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -117,15 +118,18 @@ export async function POST(request: Request) {
         body = { error: 'Upstream returned non-JSON payload', details: text, parserError: (error as Error).message };
       }
 
-      if (!response.ok && !isVercel && (response.status === 404 || response.status === 405) && !forceRemotePipeline) {
+      if (!response.ok && allowLocalFallback) {
         return runLocalPipeline(payload);
       }
 
-      if (!response.ok && (response.status === 404 || response.status === 405)) {
+      if (!response.ok) {
         return jsonWithCors(
           {
             error: 'Remote pipeline endpoint unavailable. Configure api/pipeline or run locally without FORCE_REMOTE_PIPELINE.',
-            details: typeof body === 'object' && body ? body : text,
+            details: {
+              status: response.status,
+              body: typeof body === 'object' && body ? body : text,
+            },
           },
           { status: 502 },
         );
@@ -133,6 +137,10 @@ export async function POST(request: Request) {
 
       return jsonWithCors(body, { status: response.status });
     } catch (error) {
+      if (allowLocalFallback) {
+        return runLocalPipeline(payload);
+      }
+
       return jsonWithCors(
         {
           error: 'Failed to invoke Python handler',
