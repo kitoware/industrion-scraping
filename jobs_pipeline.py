@@ -54,6 +54,23 @@ def resolve_input(single_url: Optional[str], input_file: Optional[str]) -> List[
     return result
 
 
+def resolve_runtime_path(path: str) -> Path:
+    original = Path(path)
+    relative = Path(*original.parts[1:]) if original.is_absolute() else original
+
+    base_override = os.environ.get("PIPELINE_RUNTIME_DIR")
+    candidate = (Path(base_override) / relative) if base_override and not original.is_absolute() else original
+
+    try:
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        return candidate
+    except OSError:
+        fallback_base = Path(os.environ.get("PIPELINE_RUNTIME_FALLBACK", "/tmp/industrion"))
+        fallback = fallback_base / relative
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
 def fingerprint(canonical_url: str, title: str, company: str) -> str:
     concat = f"{canonical_url}||{title}||{company}"
     return hashlib.sha256(concat.encode("utf-8")).hexdigest()
@@ -74,9 +91,9 @@ def run_pipeline(
 ) -> Dict[str, Any]:
     logger = get_logger()
     runtime_cfg = config.get("runtime", {})
-    cache_path = runtime_cfg.get("cache_path", "data/cache.sqlite")
-    Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
-    cache = Cache(cache_path)
+    cache_path_value = runtime_cfg.get("cache_path", "data/cache.sqlite")
+    cache_path = resolve_runtime_path(cache_path_value)
+    cache = Cache(str(cache_path))
 
     firecrawl = FirecrawlClient(config.get("firecrawl", {}))
     llm = OpenRouterClient(config.get("openrouter", {}))
@@ -348,9 +365,7 @@ def run_pipeline(
                 appended = sheets.append_rows(rows)
                 totals["rows_appended"] += appended
             elif dry_run and rows:
-                # Write to CSV locally for inspection
-                out_path = Path("data/dry_run.csv")
-                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path = resolve_runtime_path("data/dry_run.csv")
                 write_header = not out_path.exists()
                 with out_path.open("a", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
