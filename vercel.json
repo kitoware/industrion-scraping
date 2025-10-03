@@ -8,7 +8,6 @@
   "routes": [
     {
       "src": "/api/pipeline",
-      "methods": ["POST", "OPTIONS", "HEAD"],
       "dest": "/api/pipeline.py"
     }
   ]
