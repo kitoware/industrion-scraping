@@ -18,6 +18,35 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 } as const;
 
+function buildRemoteEndpoints(protocol: string, host: string | null) {
+  if (pipelineEndpointEnv && pipelineEndpointEnv.startsWith('http')) {
+    return [pipelineEndpointEnv.replace(/\/+$/, '')];
+  }
+
+  if (!host) {
+    return [] as string[];
+  }
+
+  const baseUrl = `${protocol}://${host}`;
+
+  if (!pipelineEndpointEnv) {
+    const canonical = `${baseUrl}/api/pipeline`.replace(/\/+$/, '');
+    const directPython = `${canonical}.py`;
+    return Array.from(new Set([canonical, directPython]));
+  }
+
+  const normalizedPath = pipelineEndpointEnv.startsWith('/')
+    ? pipelineEndpointEnv
+    : `/${pipelineEndpointEnv}`;
+  const absolute = `${baseUrl}${normalizedPath}`.replace(/\/+$/, '');
+
+  if (absolute.endsWith('.py')) {
+    return [absolute];
+  }
+
+  return Array.from(new Set([absolute, `${absolute}.py`]));
+}
+
 function withCors(init?: ResponseInit): ResponseInit {
   const headers = new Headers(init?.headers);
   Object.entries(corsHeaders).forEach(([key, value]) => {
@@ -108,63 +137,82 @@ export async function POST(request: Request) {
       return jsonWithCors({ error: 'Missing host header in request' }, { status: 502 });
     }
 
-    const remoteEndpoint = (() => {
-      if (!pipelineEndpointEnv) {
-        return `${protocol}://${host}/api/pipeline`;
-      }
-      if (pipelineEndpointEnv.startsWith('http')) {
-        return pipelineEndpointEnv.replace(/\/$/, '');
-      }
-      const normalizedPath = pipelineEndpointEnv.startsWith('/') ? pipelineEndpointEnv : `/${pipelineEndpointEnv}`;
-      return `${protocol}://${host}${normalizedPath}`;
-    })();
+    const remoteEndpoints = buildRemoteEndpoints(protocol, host);
+    if (!remoteEndpoints.length) {
+      return jsonWithCors({ error: 'Unable to resolve remote pipeline endpoint' }, { status: 502 });
+    }
 
-    try {
-      const response = await fetch(remoteEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        cache: 'no-store',
-        body: JSON.stringify(payload),
-      });
+    for (let index = 0; index < remoteEndpoints.length; index++) {
+      const endpoint = remoteEndpoints[index];
+      const isLastEndpoint = index === remoteEndpoints.length - 1;
 
-      const text = await response.text();
-      let body: unknown;
       try {
-        body = text ? JSON.parse(text) : {};
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          cache: 'no-store',
+          body: JSON.stringify(payload),
+        });
+
+        const text = await response.text();
+        let body: unknown;
+        try {
+          body = text ? JSON.parse(text) : {};
+        } catch (error) {
+          body = { error: 'Upstream returned non-JSON payload', details: text, parserError: (error as Error).message };
+        }
+
+        if (!response.ok) {
+          if (response.status === 405 && !isLastEndpoint) {
+            console.warn(`Remote pipeline ${endpoint} rejected POST; retrying fallback endpoint.`);
+            continue;
+          }
+
+          if (allowLocalFallback) {
+            console.warn(`Remote pipeline ${endpoint} failed with status ${response.status}; using local pipeline.`);
+            return runLocalPipeline(payload);
+          }
+
+          return jsonWithCors(
+            {
+              error: 'Remote pipeline request failed',
+              status: response.status,
+              details: typeof body === 'object' && body ? body : text,
+            },
+            { status: response.status },
+          );
+        }
+
+        if (index > 0) {
+          console.warn(`Remote pipeline fallback succeeded via ${endpoint}.`);
+        }
+
+        return jsonWithCors(body, { status: response.status });
       } catch (error) {
-        body = { error: 'Upstream returned non-JSON payload', details: text, parserError: (error as Error).message };
-      }
+        if (!isLastEndpoint) {
+          console.warn(
+            `Remote pipeline request to ${endpoint} failed: ${
+              error instanceof Error ? error.message : String(error)
+            }. Trying fallback endpoint.`,
+          );
+          continue;
+        }
 
-      if (!response.ok && allowLocalFallback) {
-        return runLocalPipeline(payload);
-      }
+        if (allowLocalFallback) {
+          console.warn(`Remote pipeline ${endpoint} unreachable; using local pipeline.`);
+          return runLocalPipeline(payload);
+        }
 
-      if (!response.ok) {
         return jsonWithCors(
           {
-            error: 'Remote pipeline request failed',
-            status: response.status,
-            details: typeof body === 'object' && body ? body : text,
+            error: 'Failed to invoke Python handler',
+            details: error instanceof Error ? error.message : String(error),
           },
-          { status: response.status },
+          { status: 502 },
         );
       }
-
-      return jsonWithCors(body, { status: response.status });
-    } catch (error) {
-      if (allowLocalFallback) {
-        return runLocalPipeline(payload);
-      }
-
-      return jsonWithCors(
-        {
-          error: 'Failed to invoke Python handler',
-          details: error instanceof Error ? error.message : String(error),
-        },
-        { status: 502 },
-      );
     }
   }
 
