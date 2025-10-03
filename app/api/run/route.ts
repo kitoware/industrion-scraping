@@ -30,15 +30,13 @@ function buildRemoteEndpoints(protocol: string, host: string | null) {
   const baseUrl = `${protocol}://${host}`;
 
   if (!pipelineEndpointEnv) {
+    const apiDirectPython = `${baseUrl}/api/pipeline.py`.replace(/\/+$/, '');
     const pyCanonical = `${baseUrl}/py/pipeline`.replace(/\/+$/, '');
     const apiCanonical = `${baseUrl}/api/pipeline`.replace(/\/+$/, '');
-    const apiDirectPython = `${apiCanonical}.py`;
-    return Array.from(new Set([pyCanonical, apiCanonical, apiDirectPython]));
+    return Array.from(new Set([apiDirectPython, pyCanonical, apiCanonical]));
   }
 
-  const normalizedPath = pipelineEndpointEnv.startsWith('/')
-    ? pipelineEndpointEnv
-    : `/${pipelineEndpointEnv}`;
+  const normalizedPath = pipelineEndpointEnv.startsWith('/') ? pipelineEndpointEnv : `/${pipelineEndpointEnv}`;
   const absolute = `${baseUrl}${normalizedPath}`.replace(/\/+$/, '');
 
   if (absolute.endsWith('.py')) {

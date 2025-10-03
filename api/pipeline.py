@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler
 from typing import Any, Dict, Optional
+
+from api.run_local import execute as run_local_execute
 
 from dotenv import load_dotenv
 
@@ -30,6 +33,22 @@ def _json_response(
         "headers": response_headers,
         "body": json.dumps(payload),
     }
+
+
+def _normalize_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    response: Dict[str, Any] = {
+        "totals": payload.get("totals"),
+        "dryRun": payload.get("dryRun"),
+    }
+
+    errors = payload.get("errors")
+    if isinstance(errors, list):
+        response["errors"] = errors
+
+    if payload.get("error"):
+        response["error"] = payload["error"]
+
+    return response
 
 
 def handler(request: Any) -> Dict[str, Any]:
@@ -132,87 +151,8 @@ def handler(request: Any) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         return _json_response(HTTPStatus.BAD_REQUEST, {"error": "Body must be a JSON object"})
 
-    url = str(payload.get("url", "")).strip()
-    if not url:
-        return _json_response(HTTPStatus.BAD_REQUEST, {"error": "Field 'url' is required"})
-
     try:
-        from urllib.parse import urlparse
-
-        parsed_url = urlparse(url)
-        if not (parsed_url.scheme in {"http", "https"} and parsed_url.netloc):
-            return _json_response(HTTPStatus.BAD_REQUEST, {"error": "Invalid URL supplied"})
-        load_dotenv(payload.get("envFile"))
-        config_path = payload.get("configPath")
-        cfg = load_config(config_path if isinstance(config_path, str) and config_path else None)
-        careers_urls = resolve_input(url, None)
-
-        dry_run = bool(payload.get("dryRun", not payload.get("sheetId")))
-        sheet_id: Optional[str] = payload.get("sheetId")
-        worksheet: Optional[str] = payload.get("worksheet")
-        company_override: Optional[str] = payload.get("company")
-
-        max_jobs: Optional[int] = None
-        if (payload_max := payload.get("maxJobs")) is not None:
-            try:
-                parsed = int(payload_max)
-                if parsed > 0:
-                    max_jobs = min(parsed, 50)
-            except (TypeError, ValueError):
-                return _json_response(HTTPStatus.BAD_REQUEST, {"error": "maxJobs must be a positive integer"})
-
-        concurrency = payload.get("concurrency")
-        try:
-            parsed_concurrency = int(concurrency) if concurrency is not None else None
-        except (TypeError, ValueError):
-            return _json_response(HTTPStatus.BAD_REQUEST, {"error": "concurrency must be an integer"})
-
-        if parsed_concurrency is not None and parsed_concurrency <= 0:
-            return _json_response(HTTPStatus.BAD_REQUEST, {"error": "concurrency must be greater than zero"})
-
-        runtime_cfg = cfg.get("runtime", {}) if isinstance(cfg, dict) else {}
-        default_concurrency = runtime_cfg.get("concurrency", 4)
-        safe_concurrency = min(parsed_concurrency or default_concurrency, 4)
-
-        result = run_pipeline(
-            config=cfg,
-            careers_urls=careers_urls,
-            sheet_id=sheet_id or cfg.get("google_sheets", {}).get("spreadsheet_id") if isinstance(cfg, dict) else None,
-            worksheet=worksheet or cfg.get("google_sheets", {}).get("worksheet_name") if isinstance(cfg, dict) else None,
-            company_override=company_override or runtime_cfg.get("company_override"),
-            dry_run=dry_run,
-            resume=False,
-            concurrency=safe_concurrency,
-            max_jobs=max_jobs,
-        )
-        totals = result.get("totals") if isinstance(result, dict) else None
-        if not isinstance(totals, dict):
-            return _json_response(
-                HTTPStatus.INTERNAL_SERVER_ERROR,
-                {"error": "Pipeline returned an unexpected totals payload"},
-            )
-
-        errors = result.get("errors") if isinstance(result, dict) else None
-        normalized_errors = errors if isinstance(errors, list) else []
-
-        if totals.get("careers_processed", 0) == 0 and normalized_errors:
-            first_error = normalized_errors[0]
-            message = first_error.get("message") if isinstance(first_error, dict) else str(first_error)
-            return _json_response(
-                HTTPStatus.INTERNAL_SERVER_ERROR,
-                {
-                    "error": message or "Pipeline reported an error",
-                    "totals": totals,
-                    "errors": normalized_errors,
-                    "dryRun": dry_run,
-                },
-            )
-
-        payload = {"totals": totals, "dryRun": dry_run}
-        if normalized_errors:
-            payload["errors"] = normalized_errors
-
-        return _json_response(HTTPStatus.OK, payload)
+        result = run_local_execute(payload)
     except ValueError as exc:
         return _json_response(
             HTTPStatus.BAD_REQUEST,
@@ -225,3 +165,103 @@ def handler(request: Any) -> Dict[str, Any]:
             HTTPStatus.INTERNAL_SERVER_ERROR,
             {"error": "Pipeline execution failed", "details": str(exc)},
         )
+
+    if not isinstance(result, dict):
+        return _json_response(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Pipeline returned invalid payload"})
+
+    totals = result.get("totals")
+    if not isinstance(totals, dict):
+        return _json_response(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Pipeline returned invalid totals"})
+
+    errors = result.get("errors") if isinstance(result.get("errors"), list) else []
+    if totals.get("careers_processed", 0) == 0 and errors:
+        first_error = errors[0]
+        message = first_error.get("message") if isinstance(first_error, dict) else str(first_error)
+        return _json_response(
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+            {
+                "error": message or "Pipeline reported an error",
+                **_normalize_payload(result),
+            },
+        )
+
+    return _json_response(HTTPStatus.OK, _normalize_payload(result))
+
+
+class PipelineHandler(BaseHTTPRequestHandler):
+    def _set_headers(self, status: HTTPStatus, extra_headers: Optional[Dict[str, str]] = None) -> None:
+        headers = {**DEFAULT_HEADERS}
+        if extra_headers:
+            headers.update(extra_headers)
+        self.send_response(status.value)
+        for key, value in headers.items():
+            self.send_header(key, str(value))
+        self.end_headers()
+
+    def _write_body(self, payload: Dict[str, Any]) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.wfile.write(body)
+
+    def _read_json_body(self) -> Optional[Dict[str, Any]]:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            return None
+        raw_body = self.rfile.read(length).decode("utf-8")
+        try:
+            parsed = json.loads(raw_body)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A003 - signature required by BaseHTTPRequestHandler
+        return
+
+    def do_OPTIONS(self) -> None:  # noqa: D401 - HTTP handler
+        self._set_headers(HTTPStatus.NO_CONTENT, {"Allow": "POST, OPTIONS"})
+
+    def do_HEAD(self) -> None:  # noqa: D401 - HTTP handler
+        self._set_headers(HTTPStatus.NO_CONTENT, {"Allow": "POST, OPTIONS"})
+
+    def do_POST(self) -> None:  # noqa: D401 - HTTP handler
+        payload = self._read_json_body()
+        if payload is None:
+            self._set_headers(HTTPStatus.BAD_REQUEST)
+            self._write_body({"error": "Invalid JSON body"})
+            return
+
+        try:
+            result = run_local_execute(payload)
+        except ValueError as exc:
+            self._set_headers(HTTPStatus.BAD_REQUEST)
+            self._write_body({"error": "Pipeline validation failed", "details": str(exc)})
+            return
+        except SystemExit as exc:
+            self._set_headers(HTTPStatus.BAD_REQUEST)
+            self._write_body({"error": f"Pipeline exit: {exc}"})
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._set_headers(HTTPStatus.INTERNAL_SERVER_ERROR)
+            self._write_body({"error": "Pipeline execution failed", "details": str(exc)})
+            return
+
+        if not isinstance(result, dict):
+            self._set_headers(HTTPStatus.INTERNAL_SERVER_ERROR)
+            self._write_body({"error": "Pipeline returned invalid payload"})
+            return
+
+        totals = result.get("totals")
+        if not isinstance(totals, dict):
+            self._set_headers(HTTPStatus.INTERNAL_SERVER_ERROR)
+            self._write_body({"error": "Pipeline returned invalid totals"})
+            return
+
+        errors = result.get("errors") if isinstance(result.get("errors"), list) else []
+        status = HTTPStatus.OK
+        if totals.get("careers_processed", 0) == 0 and errors:
+            status = HTTPStatus.INTERNAL_SERVER_ERROR
+
+        self._set_headers(status)
+        self._write_body(_normalize_payload(result))
+
+
+__all__ = ["handler", "PipelineHandler"]
