@@ -2,7 +2,7 @@
   "functions": {
     "api/pipeline.py": {
       "maxDuration": 60,
-      "runtime": "@vercel/python@3.11"
+      "runtime": "@vercel/python@3.12"
     }
   },
   "routes": [
