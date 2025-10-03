@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import { spawn } from 'node:child_process';
 
-const isProd = process.env.NODE_ENV === 'production';
+const isVercel = process.env.VERCEL === '1';
+const forceRemotePipeline = process.env.FORCE_REMOTE_PIPELINE === '1';
+const shouldUseRemotePipeline = isVercel || forceRemotePipeline;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -25,47 +27,7 @@ export async function OPTIONS() {
   return new Response(null, withCors({ status: 204, headers: { Allow: 'POST, OPTIONS' } }));
 }
 
-export async function POST(request: Request) {
-  const payload = await request.json();
-
-  if (isProd) {
-    const protocol = request.headers.get('x-forwarded-proto') ?? 'https';
-    const host = request.headers.get('host');
-
-    if (!host) {
-      return jsonWithCors({ error: 'Missing host header in request' }, { status: 502 });
-    }
-
-    try {
-      const response = await fetch(`${protocol}://${host}/api/pipeline`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        cache: 'no-store',
-        body: JSON.stringify(payload),
-      });
-
-      const text = await response.text();
-      let body: unknown;
-      try {
-        body = text ? JSON.parse(text) : {};
-      } catch (error) {
-        body = { error: 'Upstream returned non-JSON payload', details: text, parserError: (error as Error).message };
-      }
-
-      return jsonWithCors(body, { status: response.status });
-    } catch (error) {
-      return jsonWithCors(
-        {
-          error: 'Failed to invoke Python handler',
-          details: error instanceof Error ? error.message : String(error),
-        },
-        { status: 502 },
-      );
-    }
-  }
-
+function runLocalPipeline(payload: unknown) {
   return new Promise<Response>((resolve) => {
     const child = spawn('python', ['api/run_local.py'], {
       cwd: process.cwd(),
@@ -124,4 +86,62 @@ export async function POST(request: Request) {
 
     child.stdin.end(JSON.stringify(payload));
   });
+}
+
+export async function POST(request: Request) {
+  const payload = await request.json();
+
+  if (shouldUseRemotePipeline) {
+    const protocol = request.headers.get('x-forwarded-proto') ?? 'https';
+    const host = request.headers.get('host');
+
+    if (!host) {
+      return jsonWithCors({ error: 'Missing host header in request' }, { status: 502 });
+    }
+
+    try {
+      const response = await fetch(`${protocol}://${host}/api/pipeline`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        cache: 'no-store',
+        body: JSON.stringify(payload),
+      });
+
+      const text = await response.text();
+      let body: unknown;
+      try {
+        body = text ? JSON.parse(text) : {};
+      } catch (error) {
+        body = { error: 'Upstream returned non-JSON payload', details: text, parserError: (error as Error).message };
+      }
+
+      if (!response.ok && !isVercel && (response.status === 404 || response.status === 405) && !forceRemotePipeline) {
+        return runLocalPipeline(payload);
+      }
+
+      if (!response.ok && (response.status === 404 || response.status === 405)) {
+        return jsonWithCors(
+          {
+            error: 'Remote pipeline endpoint unavailable. Configure api/pipeline or run locally without FORCE_REMOTE_PIPELINE.',
+            details: typeof body === 'object' && body ? body : text,
+          },
+          { status: 502 },
+        );
+      }
+
+      return jsonWithCors(body, { status: response.status });
+    } catch (error) {
+      return jsonWithCors(
+        {
+          error: 'Failed to invoke Python handler',
+          details: error instanceof Error ? error.message : String(error),
+        },
+        { status: 502 },
+      );
+    }
+  }
+
+  return runLocalPipeline(payload);
 }
