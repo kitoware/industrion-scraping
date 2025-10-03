@@ -149,6 +149,9 @@ export default function ScrapeForm() {
           if (data.stderr) {
             console.error(data.stderr);
           }
+          if (data.details) {
+            console.warn('Remote pipeline details:', data.details);
+          }
           const details = normalizeErrorDetails(data.errors);
           setErrorDetails(details.length ? details : null);
           if (data.totals) {

@@ -125,13 +125,10 @@ export async function POST(request: Request) {
       if (!response.ok) {
         return jsonWithCors(
           {
-            error: 'Remote pipeline endpoint unavailable. Configure api/pipeline or run locally without FORCE_REMOTE_PIPELINE.',
-            details: {
-              status: response.status,
-              body: typeof body === 'object' && body ? body : text,
-            },
+            error: 'Remote pipeline request failed',
+            details: typeof body === 'object' && body ? body : text,
           },
-          { status: 502 },
+          { status: response.status },
         );
       }
 
