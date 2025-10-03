@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { spawn } from 'node:child_process';
 
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+
 const isVercel = process.env.VERCEL === '1';
 const forceRemotePipeline = process.env.FORCE_REMOTE_PIPELINE === '1';
 const pipelineEndpointEnv = process.env.PIPELINE_ENDPOINT?.trim();
